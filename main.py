@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from datetime import date
 import sqlite3
 import logging
+import requests
 
 # Logging sozlamalari
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -146,15 +147,16 @@ def start(message):
 @bot.message_handler(func=lambda m: m.text == "🎰 Spin")
 def spin_game(message):
     user_id = message.from_user.id
+    # GIF URL dan yuborish
+    gif_url = "https://media.giphy.com/media/3o6Zta2Xv3d0Xv4zC/giphy.gif"  # Slot machine GIF
     try:
-        with open("spin.gif", "rb") as gif:
-            bot.send_animation(user_id, gif, caption="🎰 Baraban aylanmoqda...")
-    except FileNotFoundError:
-        logger.error("spin.gif fayli topilmadi")
+        bot.send_animation(user_id, gif_url, caption="🎰 Baraban aylanmoqda...")
+    except Exception as e:
+        logger.error(f"GIF yuborishda xato: {e}")
         bot.send_message(user_id, "❌ Texnik xato, keyinroq urinib ko‘ring.")
         return
 
-    reward = random.choice([0, 1000, 2000, 5000, 10000])
+    reward = random.choices([0, 1000, 2000, 5000, 10000], weights=[0.5, 0.3, 0.15, 0.05, 0.01])[0]
     current_balance = get_user_balance(user_id)
     update_user_balance(user_id, current_balance + reward)
     bot.send_message(user_id, f"✅ Siz {reward} so‘m yutdingiz!\n💰 Balansingiz: {current_balance + reward} so‘m")
