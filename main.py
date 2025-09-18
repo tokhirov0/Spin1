@@ -186,4 +186,29 @@ def webhook():
         json_string = request.get_data().decode("utf-8")
         update = telebot.types.Update.de_json(json_string)
         bot.process_new_updates([update])
-        logger.info(f"Webhook so'
+        logger.info(f"Webhook so'rovi qabul qilindi: {json_string[:200]}")
+        if update.message:
+            logger.info(f"Xabar: {update.message.text} ID: {update.message.from_user.id}")
+        return "OK", 200
+    except Exception as e:
+        logger.error(f"Webhook xatosi: {e}")
+        return "Error", 500
+
+# Asosiy sahifa
+@app.route("/")
+def index():
+    return "Bot faqat Telegram orqali ishlaydi!", 200
+
+# Webhookni o‘rnatish
+def set_webhook():
+    try:
+        bot.remove_webhook()
+        bot.set_webhook(url=WEBHOOK_URL)
+        logger.info(f"Webhook o‘rnatildi: {WEBHOOK_URL}")
+    except Exception as e:
+        logger.error(f"Webhook o‘rnatishda xato: {e}")
+
+# Serverni ishga tushirish
+if __name__ == "__main__":
+    set_webhook()
+    app.run(host="0.0.0.0", port=PORT, debug=True)
