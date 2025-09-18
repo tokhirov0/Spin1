@@ -5,6 +5,7 @@ import telebot
 from flask import Flask, request
 from dotenv import load_dotenv
 import logging
+import requests
 
 # Logging sozlamalari
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -46,7 +47,7 @@ def save_data(file, data):
     logger.info("%s saqlandi: %s", file, data)
 
 # /start buyrug'i (referral bilan)
-@bot.message_handler(commands=['start'])  # To'g'ri list sifatida
+@bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_id = message.from_user.id
     referred_by = None
@@ -220,6 +221,11 @@ def process_channel_add(message):
             logger.error("Kanal qo‘shish xatosi: %s", e)
     else:
         bot.reply_to(message, "❌ Noto‘g‘ri format! @ bilan boshlang (masalan: @mychannel)")
+
+# Asosiy sahifa uchun handler
+@app.route('/')
+def index():
+    return "Bot faqat Telegram orqali ishlaydi. /<BOT_TOKEN> ga so'rov yuboring!", 200
 
 # Webhook handler
 @app.route('/' + BOT_TOKEN, methods=['POST'])
