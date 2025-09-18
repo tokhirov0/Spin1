@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 import requests
 import logging
 
-# Logging sozlamalari (xatolarni kuzatish uchun)
+# Logging sozlamalari
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -45,14 +45,14 @@ def save_channels():
     logger.info("Kanallar saqlandi: %s", channels)
 
 # /start buyrug'i uchun handler
-@bot.message_handler(commands=['start'])
+@bot.message_handler(commands=['start'])  # List sifatida to'g'ri kiritilgan
 def send_welcome(message):
     user_id = message.from_user.id
     logger.info("Foydalanuvchi ID: %s /start ni boshladi", user_id)
     markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row(telebot.types.KeyboardButton("🎰 Spin"), telebot.types.KeyboardButton("🎁 Bonus"))
     markup.row(telebot.types.KeyboardButton("👤 Profil"))
-    if str(user_id) == ADMIN_ID:  # Adminni tekshirish
+    if str(user_id) == ADMIN_ID:
         markup.row(telebot.types.KeyboardButton("⚙️ Admin panel"))
     bot.send_message(message.chat.id, "Assalomu alaykum! Botga xush kelibsiz!", reply_markup=markup)
 
@@ -147,7 +147,7 @@ def process_channel_add(message):
 
 # Webhookni o‘rnatish
 def set_webhook():
-    url = RENDER_URL + BOT_TOKEN
+    url = f"{RENDER_URL}/{BOT_TOKEN}"  # URL ni to'g'ri formatda
     try:
         bot.set_webhook(url=url)
         logger.info("Webhook o‘rnatildi: %s", url)
