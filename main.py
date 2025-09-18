@@ -46,7 +46,7 @@ def save_data(file, data):
     logger.info("%s saqlandi: %s", file, data)
 
 # /start buyrug'i (referral bilan)
-@bot.message_handler(commands=['start'])
+@bot.message_handler(commands=['start'])  # To'g'ri list sifatida
 def send_welcome(message):
     user_id = message.from_user.id
     referred_by = None
@@ -74,7 +74,7 @@ def send_welcome(message):
     bot.send_message(message.chat.id, "Assalomu alaykum! Botga xush kelibsiz! 👋", reply_markup=markup)
 
 # Profil ma'lumotlari
-@bot.message_handler(lambda message: message.text == "👤 Profil")
+@bot.message_handler(func=lambda message: message.text == "👤 Profil")
 def show_profile(message):
     user_id = message.from_user.id
     username = message.from_user.username or "Noma'lum"
@@ -85,7 +85,7 @@ def show_profile(message):
     bot.send_message(message.chat.id, f"👤 ID: <code>{user_id}</code>\n📅 Username: @{username}\n💰 Balans: {balance} so‘m\n🎰 Spinlar: {spins}\n👥 Taklif qiluvchi: {referred_by}")
 
 # Spin o'yini (GIF bilan)
-@bot.message_handler(lambda message: message.text == "🎰 Spin")
+@bot.message_handler(func=lambda message: message.text == "🎰 Spin")
 def spin_game(message):
     user_id = message.from_user.id
     spins = users.get(str(user_id), {}).get("spins", 0)
@@ -103,15 +103,13 @@ def spin_game(message):
     save_data("users.json", users)
     bot.send_message(message.chat.id, f"✅ Siz {reward} so‘m yutdingiz!\n💰 Balansingiz: {users[str(user_id)]['balance']} so‘m\n🎰 Qolgan spinlar: {users[str(user_id)]['spins']}")
 
-# Bonus (kunlik)
-@bot.message_handler(lambda message: message.text == "🎁 Bonus")
+# Bonus (placeholder)
+@bot.message_handler(func=lambda message: message.text == "🎁 Bonus")
 def bonus_message(message):
-    user_id = message.from_user.id
-    # Placeholder, hozircha faqat xabar
     bot.send_message(message.chat.id, "🎁 Bonus hali mavjud emas, tez orada qo‘shiladi!")
 
 # Pul yechish
-@bot.message_handler(lambda message: message.text == "💸 Pul yechish")
+@bot.message_handler(func=lambda message: message.text == "💸 Pul yechish")
 def withdraw(message):
     msg = bot.send_message(message.chat.id, "💸 Yechmoqchi bo‘lgan summani yozing (100000 so‘mdan kam emas):")
     bot.register_next_step_handler(msg, process_withdraw)
@@ -140,7 +138,7 @@ def process_withdraw(message):
         bot.send_message(ADMIN_ID, f"💸 Yangi pul yechish so‘rovi!\n👤 ID: {user_id}\n💰 Summasi: {amount} so‘m")
 
 # Referal bo‘limi
-@bot.message_handler(lambda message: message.text == "👥 Referal")
+@bot.message_handler(func=lambda message: message.text == "👥 Referal")
 def referal(message):
     user_id = message.from_user.id
     referral_link = f"https://t.me/{bot.get_me().username}?start={user_id}"
@@ -149,7 +147,7 @@ def referal(message):
     bot.send_message(message.chat.id, f"👥 Do‘stlaringizni taklif qiling!\nHar bir do‘stingiz uchun bitta imkoniyat olasiz!\nReferal linkingiz: {referral_link}", reply_markup=markup)
 
 # Referal yuborish
-@bot.message_handler(lambda message: message.text == "Referal yuborish")
+@bot.message_handler(func=lambda message: message.text == "Referal yuborish")
 def send_referal(message):
     user_id = message.from_user.id
     referral_link = f"https://t.me/{bot.get_me().username}?start={user_id}"
@@ -165,7 +163,7 @@ def get_admin_markup():
     return markup
 
 # Admin panelga kirish
-@bot.message_handler(lambda message: message.text == "⚙️ Admin panel" and str(message.from_user.id) == ADMIN_ID)
+@bot.message_handler(func=lambda message: message.text == "⚙️ Admin panel" and str(message.from_user.id) == ADMIN_ID)
 def admin_panel(message):
     logger.info("Admin %s panelga kirdi", message.from_user.id)
     markup = get_admin_markup()
