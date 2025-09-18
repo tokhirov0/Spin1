@@ -1,302 +1,160 @@
 import os
-import random
 import json
 import telebot
 from flask import Flask, request
 from dotenv import load_dotenv
-from datetime import date
-import sqlite3
-import logging
 import requests
+import logging
 
-# Logging sozlamalari
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Logging sozlamalari (xatolarni kuzatish uchun)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# .env faylidan o‘zgaruvchilarni yuklash
+# Environment o'zgaruvchilarini yuklash
 load_dotenv()
-
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_URL = os.getenv("RENDER_URL") + "/" + BOT_TOKEN
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+if not BOT_TOKEN:
+    logger.error("BOT_TOKEN topilmadi!")
+    exit(1)
+RENDER_URL = os.getenv("RENDER_URL")
+if not RENDER_URL:
+    logger.error("RENDER_URL topilmadi!")
+    exit(1)
+ADMIN_ID = os.getenv("ADMIN_ID")
+if not ADMIN_ID:
+    logger.error("ADMIN_ID topilmadi!")
+    exit(1)
+PORT = int(os.getenv("PORT", 10000))
 
-# Telegram bot va Flask ilovasini ishga tushirish
-bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
-app = Flask(__name__)
+# Bot va Flask serverni boshlash
+bot = telebot.TeleBot(BOT_TOKEN)
+server = Flask(__name__)
 
-# SQLite ma’lumotlar bazasi
-DB_FILE = "bot_data.db"
+# Kanallar faylini yuklash
+try:
+    with open("channels.json", "r") as f:
+        channels = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    channels = []
+    logger.info("channels.json yaratildi yoki bo'sh bo'lib yuklandi.")
 
-def init_db():
-    with sqlite3.connect(DB_FILE) as conn:
-        cursor = conn.cursor()
-        cursor.execute('''CREATE TABLE IF NOT EXISTS users (
-                            user_id INTEGER PRIMARY KEY,
-                            balance INTEGER DEFAULT 0,
-                            last_bonus_date TEXT
-                        )''')
-        cursor.execute('''CREATE TABLE IF NOT EXISTS referrals (
-                            user_id INTEGER,
-                            referred_id INTEGER,
-                            PRIMARY KEY (user_id, referred_id)
-                        )''')
-        conn.commit()
+# Kanallarni saqlash funksiyasi
+def save_channels():
+    with open("channels.json", "w") as f:
+        json.dump(channels, f)
+    logger.info("Kanallar saqlandi: %s", channels)
 
-init_db()
-
-# Kanallar ro‘yxati
-CHANNELS_FILE = "channels.json"
-
-def load_channels():
-    try:
-        if os.path.exists(CHANNELS_FILE):
-            with open(CHANNELS_FILE, "r") as f:
-                return json.load(f)
-        return []
-    except Exception as e:
-        logger.error(f"Kanal faylini yuklashda xato: {e}")
-        return []
-
-def save_channels(channels):
-    try:
-        with open(CHANNELS_FILE, "w") as f:
-            json.dump(channels, f)
-    except Exception as e:
-        logger.error(f"Kanal faylini saqlashda xato: {e}")
-
-channels = load_channels()
-
-# Foydalanuvchi ma’lumotlarini bazadan olish
-def get_user_balance(user_id):
-    with sqlite3.connect(DB_FILE) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-        result = cursor.fetchone()
-        return result[0] if result else 0
-
-def update_user_balance(user_id, amount):
-    with sqlite3.connect(DB_FILE) as conn:
-        cursor = conn.cursor()
-        cursor.execute("INSERT OR REPLACE INTO users (user_id, balance) VALUES (?, ?)",
-                      (user_id, amount))
-        conn.commit()
-
-def get_last_bonus_date(user_id):
-    with sqlite3.connect(DB_FILE) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT last_bonus_date FROM users WHERE user_id = ?", (user_id,))
-        result = cursor.fetchone()
-        return result[0] if result else None
-
-def update_last_bonus_date(user_id, bonus_date):
-    with sqlite3.connect(DB_FILE) as conn:
-        cursor = conn.cursor()
-        cursor.execute("UPDATE users SET last_bonus_date = ? WHERE user_id = ?",
-                      (bonus_date, user_id))
-        conn.commit()
-
-# --- Start ---
-@bot.message_handler(commands=["start"])
-def start(message):
+# /start buyrug'i uchun handler
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
     user_id = message.from_user.id
-    args = message.text.split()
-    referrer_id = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
+    logger.info("Foydalanuvchi ID: %s /start ni boshladi", user_id)
+    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row(telebot.types.KeyboardButton("🎰 Spin"), telebot.types.KeyboardButton("🎁 Bonus"))
+    markup.row(telebot.types.KeyboardButton("👤 Profil"))
+    if str(user_id) == ADMIN_ID:  # Adminni tekshirish
+        markup.row(telebot.types.KeyboardButton("⚙️ Admin panel"))
+    bot.send_message(message.chat.id, "Assalomu alaykum! Botga xush kelibsiz!", reply_markup=markup)
 
-    # Kanal tekshirish
-    if channels:
-        not_subscribed = []
-        for ch in channels:
-            try:
-                status = bot.get_chat_member(ch, user_id).status
-                if status in ["left", "kicked"]:
-                    not_subscribed.append(ch)
-            except Exception as e:
-                logger.error(f"Kanal tekshirishda xato ({ch}): {e}")
-                not_subscribed.append(ch)
-
-        if not_subscribed:
-            keyboard = telebot.types.InlineKeyboardMarkup()
-            for ch in not_subscribed:
-                keyboard.add(telebot.types.InlineKeyboardButton("Obuna bo‘lish", url=f"https://t.me/{ch[1:]}"))
-            bot.send_message(user_id, "❗ Botdan foydalanish uchun quyidagi kanallarga obuna bo‘ling:", reply_markup=keyboard)
-            return
-
-    # Yangi foydalanuvchi qo‘shish
-    if not get_user_balance(user_id):
-        update_user_balance(user_id, 0)
-        # Referal bonus
-        if referrer_id and referrer_id != user_id:
-            with sqlite3.connect(DB_FILE) as conn:
-                cursor = conn.cursor()
-                cursor.execute("INSERT OR IGNORE INTO referrals (user_id, referred_id) VALUES (?, ?)",
-                              (referrer_id, user_id))
-                conn.commit()
-            referrer_balance = get_user_balance(referrer_id)
-            update_user_balance(referrer_id, referrer_balance + 2000)
-            bot.send_message(referrer_id, f"🎉 Do‘stingiz botga qo‘shildi! Sizga 2000 so‘m bonus qo‘shildi.")
-
-    keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.add("🎰 Spin", "🎁 Bonus", "👤 Profil")
-    keyboard.add("💸 Pul yechish", "👥 Referal")
-    if user_id == ADMIN_ID:
-        keyboard.add("⚙️ Admin panel")
-
-    bot.send_message(user_id, "Salom! Botga xush kelibsiz 👋", reply_markup=keyboard)
-
-# --- Spin ---
-@bot.message_handler(func=lambda m: m.text == "🎰 Spin")
-def spin_game(message):
+# Profil ma'lumotlari
+@bot.message_handler(lambda message: message.text == "👤 Profil")
+def show_profile(message):
     user_id = message.from_user.id
-    # GIF URL dan yuborish
-    gif_url = "https://media.giphy.com/media/3o6Zta2Xv3d0Xv4zC/giphy.gif"  # Slot machine GIF
-    try:
-        bot.send_animation(user_id, gif_url, caption="🎰 Baraban aylanmoqda...")
-    except Exception as e:
-        logger.error(f"GIF yuborishda xato: {e}")
-        bot.send_message(user_id, "❌ Texnik xato, keyinroq urinib ko‘ring.")
-        return
+    username = message.from_user.username or "Noma'lum"
+    logger.info("Foydalanuvchi %s profilda", user_id)
+    bot.send_message(message.chat.id, f"📋 Sizning ID: {user_id}\n📅 Ro'yxatdan o'tgan vaqt: @{username}")
 
-    reward = random.choices([0, 1000, 2000, 5000, 10000], weights=[0.5, 0.3, 0.15, 0.05, 0.01])[0]
-    current_balance = get_user_balance(user_id)
-    update_user_balance(user_id, current_balance + reward)
-    bot.send_message(user_id, f"✅ Siz {reward} so‘m yutdingiz!\n💰 Balansingiz: {current_balance + reward} so‘m")
-    logger.info(f"Foydalanuvchi {user_id} spin o‘ynadi, yutuq: {reward}")
-
-# --- Bonus ---
-@bot.message_handler(func=lambda m: m.text == "🎁 Bonus")
-def daily(message):
-    user_id = message.from_user.id
-    today = str(date.today())
-    last_bonus_date = get_last_bonus_date(user_id)
-
-    if last_bonus_date == today:
-        bot.send_message(user_id, "❌ Siz bonusni bugun oldingiz, ertaga yana urinib ko‘ring.")
-        return
-
-    current_balance = get_user_balance(user_id)
-    update_user_balance(user_id, current_balance + 5000)
-    update_last_bonus_date(user_id, today)
-    bot.send_message(user_id, f"🎁 Sizga 5000 so‘m bonus qo‘shildi!\n💰 Balans: {current_balance + 5000}")
-    logger.info(f"Foydalanuvchi {user_id} kunlik bonus oldi")
-
-# --- Profil ---
-@bot.message_handler(func=lambda m: m.text == "👤 Profil")
-def profile(message):
-    user_id = message.from_user.id
-    balance = get_user_balance(user_id)
-    bot.send_message(user_id, f"👤 ID: <code>{user_id}</code>\n💰 Balans: {balance} so‘m")
-
-# --- Pul yechish ---
-@bot.message_handler(func=lambda m: m.text == "💸 Pul yechish")
-def withdraw(message):
-    msg = bot.send_message(message.chat.id, "💸 Yechmoqchi bo‘lgan summani yozing (100000 so‘mdan kam emas):")
-    bot.register_next_step_handler(msg, process_withdraw)
-
-def process_withdraw(message):
-    user_id = message.from_user.id
-    try:
-        amount = int(message.text)
-    except ValueError:
-        bot.send_message(user_id, "❌ Raqam kiriting!")
-        return
-
-    if amount < 100000:
-        bot.send_message(user_id, "❌ Minimal pul yechish 100000 so‘m.")
-        return
-
-    current_balance = get_user_balance(user_id)
-    if current_balance < amount:
-        bot.send_message(user_id, "❌ Balansingizda mablag‘ yetarli emas.")
-        return
-
-    update_user_balance(user_id, current_balance - amount)
-    bot.send_message(user_id, f"✅ Pul yechish so‘rovi yuborildi.\n💸 Summasi: {amount} so‘m")
-    bot.send_message(ADMIN_ID, f"💸 Yangi pul yechish so‘rovi!\n👤 ID: {user_id}\n💰 Summasi: {amount} so‘m")
-    logger.info(f"Foydalanuvchi {user_id} {amount} so‘m yechish so‘rovini yubordi")
-
-# --- Referal ---
-@bot.message_handler(func=lambda m: m.text == "👥 Referal")
-def referal(message):
-    user_id = message.from_user.id
-    link = f"https://t.me/{bot.get_me().username}?start={user_id}"
-    with sqlite3.connect(DB_FILE) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM referrals WHERE user_id = ?", (user_id,))
-        referral_count = cursor.fetchone()[0]
-    bot.send_message(user_id, f"👥 Do‘stlaringizni taklif qiling!\nReferal linkingiz: {link}\nTaklif qilinganlar: {referral_count}")
-
-# --- Admin panel ---
-@bot.message_handler(func=lambda m: m.text == "⚙️ Admin panel" and m.from_user.id == ADMIN_ID)
-def admin_panel(message):
-    keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.add("➕ Kanal qo‘shish", "➖ Kanal o‘chirish")
-    keyboard.add("📊 Statistika", "⬅️ Orqaga")
-    bot.send_message(ADMIN_ID, "⚙️ Admin panelga xush kelibsiz!", reply_markup=keyboard)
-
-@bot.message_handler(func=lambda m: m.text == "➕ Kanal qo‘shish" and m.from_user.id == ADMIN_ID)
-def add_channel(message):
-    msg = bot.send_message(ADMIN_ID, "➕ Kanal username-ni kiriting (@ bilan):")
-    bot.register_next_step_handler(msg, save_channel)
-
-def save_channel(message):
-    ch = message.text.strip()
-    if not ch.startswith("@"):
-        bot.send_message(ADMIN_ID, "❌ To‘g‘ri formatda kiriting! (@kanal)")
-        return
-    channels.append(ch)
-    save_channels(channels)
-    bot.send_message(ADMIN_ID, f"✅ Kanal qo‘shildi: {ch}")
-    logger.info(f"Admin kanal qo‘shdi: {ch}")
-
-@bot.message_handler(func=lambda m: m.text == "➖ Kanal o‘chirish" and m.from_user.id == ADMIN_ID)
-def del_channel(message):
-    if not channels:
-        bot.send_message(ADMIN_ID, "❌ Hozircha kanal yo‘q.")
-        return
-    ch = channels.pop()
-    save_channels(channels)
-    bot.send_message(ADMIN_ID, f"❌ Kanal o‘chirildi: {ch}")
-    logger.info(f"Admin kanal o‘chirdi: {ch}")
-
-@bot.message_handler(func=lambda m: m.text == "📊 Statistika" and m.from_user.id == ADMIN_ID)
-def stats(message):
-    with sqlite3.connect(DB_FILE) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM users")
-        user_count = cursor.fetchone()[0]
-    bot.send_message(ADMIN_ID, f"📊 Foydalanuvchilar soni: {user_count} ta\n📢 Kanallar: {', '.join(channels) if channels else 'yo‘q'}")
-    logger.info("Admin statistikani ko‘rdi")
-
-# --- Orqaga ---
-@bot.message_handler(func=lambda m: m.text == "⬅️ Orqaga" and m.from_user.id == ADMIN_ID)
-def back(message):
-    start(message)
-
-# --- Flask webhook ---
-@app.route("/" + BOT_TOKEN, methods=["POST"])
+# Webhook handler
+@server.route('/' + BOT_TOKEN, methods=['POST'])
 def webhook():
-    try:
-        json_str = request.stream.read().decode("utf-8")
-        update = telebot.types.Update.de_json(json_str)
-        bot.process_new_updates([update])
-        return "!", 200
-    except Exception as e:
-        logger.error(f"Webhook xatosi: {e}")
-        return "Error", 500
+    json_string = request.get_data().decode('utf-8')
+    update = telebot.types.Update.de_json(json_string)
+    bot.process_new_updates([update])
+    logger.info("Webhook so'rovi qabul qilindi")
+    return "OK", 200
 
-@app.route("/")
-def index():
-    return "Bot ishlayapti!", 200
+# Admin panel inline keyboard
+def get_admin_markup():
+    markup = telebot.types.InlineKeyboardMarkup()
+    markup.row(telebot.types.InlineKeyboardButton("➕ Kanal qo‘shish", callback_data="add_channel"))
+    markup.row(telebot.types.InlineKeyboardButton("➖ Kanal o‘chirish", callback_data="remove_channel"))
+    markup.row(telebot.types.InlineKeyboardButton("📊 Statistika", callback_data="stats"))
+    markup.row(telebot.types.InlineKeyboardButton("⬅️ Orqaga", callback_data="back"))
+    return markup
 
+# Admin panelga kirish
+@bot.message_handler(lambda message: message.text == "⚙️ Admin panel" and str(message.from_user.id) == ADMIN_ID)
+def admin_panel(message):
+    logger.info("Admin %s panelga kirdi", message.from_user.id)
+    markup = get_admin_markup()
+    bot.send_message(message.chat.id, "⚙️ Admin panelga xush kelibsiz!", reply_markup=markup)
+
+# Callback handler
+@bot.callback_query_handler(func=lambda call: True)
+def callback_handler(call):
+    user_id = call.from_user.id
+    logger.info("Callback: %s, User ID: %s", call.data, user_id)
+    if str(user_id) != ADMIN_ID:
+        bot.answer_callback_query(call.id, "❌ Siz admin emassiz!")
+        return
+
+    if call.data == "add_channel":
+        msg = bot.send_message(call.message.chat.id, "📝 @ bilan kanal username'ni kiriting (masalan: @mychannel)")
+        bot.register_next_step_handler(msg, process_channel_add)
+
+    elif call.data == "remove_channel":
+        if not channels:
+            bot.answer_callback_query(call.id, "❌ Hozircha kanal yo‘q")
+        else:
+            removed_channel = channels.pop()
+            save_channels()
+            bot.answer_callback_query(call.id, f"❌ Kanal o‘chirildi: {removed_channel}")
+
+    elif call.data == "stats":
+        try:
+            user_count = len(set([msg.from_user.id for msg in bot.get_updates() if msg.message]))
+            bot.answer_callback_query(call.id, f"📊 Foydalanuvchilar soni: {user_count} ta\n📢 Kanallar: {', '.join(channels) or 'Yo‘q'}")
+        except Exception as e:
+            bot.answer_callback_query(call.id, "❌ Statistika yuklanmadi!")
+            logger.error("Statistika xatosi: %s", e)
+
+    elif call.data == "back":
+        bot.edit_message_text("⚙️ Admin paneldan chiqdingiz!", call.message.chat.id, call.message.message_id)
+        send_welcome(telebot.types.Message.de_json({"chat": {"id": call.message.chat.id}, "from_user": call.from_user}))
+
+# Kanal qo‘shish funksiyasi
+def process_channel_add(message):
+    channel = message.text
+    logger.info("Kanal qo‘shish urunish: %s", channel)
+    if channel.startswith("@") and len(channel) > 1:
+        try:
+            response = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getChat?chat_id={channel}")
+            data = response.json()
+            if data["ok"]:
+                if channel not in channels:
+                    channels.append(channel)
+                    save_channels()
+                    bot.reply_to(message, f"✅ Kanal qo‘shildi: {channel}")
+                else:
+                    bot.reply_to(message, f"❗ {channel} allaqachon qo‘shilgan!")
+            else:
+                bot.reply_to(message, "❌ Kanal topilmadi yoki botda ruxsat yo‘q!")
+        except Exception as e:
+            bot.reply_to(message, "❌ Xatolik yuz berdi, qayta urining!")
+            logger.error("Kanal qo‘shish xatosi: %s", e)
+    else:
+        bot.reply_to(message, "❌ Noto‘g‘ri format! @ bilan boshlang (masalan: @mychannel)")
+
+# Webhookni o‘rnatish
 def set_webhook():
+    url = RENDER_URL + BOT_TOKEN
     try:
-        bot.remove_webhook()
-        bot.set_webhook(url=WEBHOOK_URL)
-        logger.info(f"Webhook o‘rnatildi: {WEBHOOK_URL}")
+        bot.set_webhook(url=url)
+        logger.info("Webhook o‘rnatildi: %s", url)
     except Exception as e:
-        logger.error(f"Webhook o‘rnatishda xato: {e}")
+        logger.error("Webhook o‘rnatish xatosi: %s", e)
 
+# Serverni ishga tushirish
 if __name__ == "__main__":
     set_webhook()
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    server.run(host="0.0.0.0", port=PORT)
