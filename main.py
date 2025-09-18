@@ -45,7 +45,7 @@ def save_channels():
     logger.info("Kanallar saqlandi: %s", channels)
 
 # /start buyrug'i uchun handler
-@bot.message_handler(commands=['start'])  # List sifatida to'g'ri kiritilgan
+@bot.message_handler(commands=['start'])  # To'g'ri list sifatida
 def send_welcome(message):
     user_id = message.from_user.id
     logger.info("Foydalanuvchi ID: %s /start ni boshladi", user_id)
@@ -147,10 +147,13 @@ def process_channel_add(message):
 
 # Webhookni o‘rnatish
 def set_webhook():
-    url = f"{RENDER_URL}/{BOT_TOKEN}"  # URL ni to'g'ri formatda
+    url = f"{RENDER_URL}/{BOT_TOKEN}"  # To'g'ri URL format
     try:
-        bot.set_webhook(url=url)
-        logger.info("Webhook o‘rnatildi: %s", url)
+        response = bot.set_webhook(url=url)
+        if response:
+            logger.info("Webhook o‘rnatildi: %s", url)
+        else:
+            logger.error("Webhook o‘rnatilmadi, tasdiq yo‘q")
     except Exception as e:
         logger.error("Webhook o‘rnatish xatosi: %s", e)
 
