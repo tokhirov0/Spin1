@@ -14,40 +14,40 @@ logger = logging.getLogger(__name__)
 # .env faylidan o‘zgaruvchilarni yuklash
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    logger.error("BOT_TOKEN topilmadi!")
-    exit(1)
-
 RENDER_URL = os.getenv("RENDER_URL")
-if not RENDER_URL:
-    logger.error("RENDER_URL topilmadi!")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+PORT = int(os.getenv("PORT", 10000))
+
+if not BOT_TOKEN or not RENDER_URL:
+    logger.error("BOT_TOKEN yoki RENDER_URL topilmadi!")
     exit(1)
 
 WEBHOOK_URL = f"{RENDER_URL}/{BOT_TOKEN}"
-ADMIN_ID = os.getenv("ADMIN_ID")
-PORT = int(os.getenv("PORT", 10000))
 
 # Bot va Flask ilovasini ishga tushirish
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 app = Flask(__name__)
 
 # Foydalanuvchilar va kanallar fayllarini yuklash
-def load_json(file, default):
-    try:
-        with open(file, "r") as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        logger.info(f"{file} yaratildi yoki bo'sh bo'lib yuklandi.")
-        return default
+try:
+    with open("users.json", "r") as f:
+        users = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    users = {}
+    logger.info("users.json yaratildi yoki bo'sh bo'lib yuklandi.")
 
-users = load_json("users.json", {})
-channels = load_json("channels.json", [])
+try:
+    with open("channels.json", "r") as f:
+        channels = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    channels = []
+    logger.info("channels.json yaratildi yoki bo'sh bo'lib yuklandi.")
 
 # Ma'lumotlarni saqlash funksiyasi
 def save_data(file, data):
     with open(file, "w") as f:
         json.dump(data, f)
-    logger.info(f"{file} saqlandi: {data}")
+    logger.info("%s saqlandi", file)
 
 # /start buyrug'i
 @bot.message_handler(commands=['start'])
@@ -71,13 +71,18 @@ def start(message):
         if not_subscribed:
             keyboard = telebot.types.InlineKeyboardMarkup()
             for ch in not_subscribed:
-                keyboard.add(telebot.types.InlineKeyboardButton("Obuna bo‘lish", url=f"https://t.me/{ch[1:]}"))
+                keyboard.add(
+                    telebot.types.InlineKeyboardButton(
+                        "Obuna bo‘lish", url=f"https://t.me/{ch[1:]}"
+                    )
+                )
             bot.send_message(user_id, "❗ Botdan foydalanish uchun quyidagi kanallarga obuna bo‘ling:", reply_markup=keyboard)
             return
 
     # Referral bonus
     if referrer_id and referrer_id != user_id and str(referrer_id) in users:
-        users[str(referrer_id)]["spins"] += 1
+        referrer_spins = users.get(str(referrer_id), {}).get("spins", 0)
+        users[str(referrer_id)]["spins"] = referrer_spins + 1
         save_data("users.json", users)
         try:
             bot.send_message(referrer_id, "🎉 Do‘stingiz botga qo‘shildi! Sizga 1 ta spin qo‘shildi.")
@@ -93,7 +98,7 @@ def start(message):
     keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add("🎰 Spin", "🎁 Bonus", "👤 Profil")
     keyboard.add("💸 Pul yechish", "👥 Referal")
-    if str(user_id) == str(ADMIN_ID):
+    if user_id == ADMIN_ID:
         keyboard.add("⚙️ Admin panel")
     bot.send_message(user_id, "Salom! Botga xush kelibsiz 👋", reply_markup=keyboard)
 
@@ -105,7 +110,6 @@ def spin_game(message):
     if spins < 1:
         bot.send_message(user_id, "❌ Sizda spin yo‘q! Referral orqali ishlang.")
         return
-
     bot.send_animation(user_id, "https://media.giphy.com/media/3o6Zta2Xv3d0Xv4zC/giphy.gif", caption="🎰 Baraban aylanmoqda...")
     reward = random.randint(1000, 10000)
     users[str(user_id)]["balance"] += reward
@@ -117,23 +121,26 @@ def spin_game(message):
 @bot.message_handler(func=lambda m: m.text == "🎁 Bonus")
 def daily_bonus(message):
     user_id = message.from_user.id
-    today_str = date.today().isoformat()
+    today = date.today().isoformat()
     last_bonus = users.get(str(user_id), {}).get("last_bonus_date")
-    if last_bonus == today_str:
+    if last_bonus == today:
         bot.send_message(user_id, "❌ Siz bugun bonusni oldingiz, ertaga qayta urinib ko‘ring!")
         return
-
     users[str(user_id)]["balance"] += 5000
-    users[str(user_id)]["last_bonus_date"] = today_str
+    users[str(user_id)]["last_bonus_date"] = today
     save_data("users.json", users)
     bot.send_message(user_id, f"🎁 Sizga 5000 so‘m bonus qo‘shildi!\n💰 Balansingiz: {users[str(user_id)]['balance']} so‘m")
 
-# Profil
+# Profil ko‘rsatish
 @bot.message_handler(func=lambda m: m.text == "👤 Profil")
 def profile(message):
     user_id = message.from_user.id
-    u = users.get(str(user_id), {})
-    bot.send_message(user_id, f"👤 ID: <code>{user_id}</code>\n💰 Balans: {u.get('balance',0)} so‘m\n🎰 Spinlar: {u.get('spins',0)}\n👥 Taklif qiluvchi: {u.get('referred_by','Hech kim')}")
+    user = users.get(str(user_id), {})
+    bot.send_message(user_id,
+                     f"👤 ID: <code>{user_id}</code>\n"
+                     f"💰 Balans: {user.get('balance',0)} so‘m\n"
+                     f"🎰 Spinlar: {user.get('spins',0)}\n"
+                     f"👥 Taklif qiluvchi: {user.get('referred_by','Hech kim')}")
 
 # Pul yechish
 @bot.message_handler(func=lambda m: m.text == "💸 Pul yechish")
@@ -148,58 +155,38 @@ def process_withdraw(message):
     except ValueError:
         bot.send_message(user_id, "❌ Faqat raqam kiriting!")
         return
-
     if amount < 100000:
         bot.send_message(user_id, "❌ Minimal pul yechish 100000 so‘m!")
         return
-
     balance = users.get(str(user_id), {}).get("balance", 0)
     if balance < amount:
         bot.send_message(user_id, "❌ Balansingizda yetarli mablag‘ yo‘q!")
         return
-
     users[str(user_id)]["balance"] -= amount
     save_data("users.json", users)
     bot.send_message(user_id, f"✅ Pul yechish so‘rovi yuborildi: {amount} so‘m")
-    if str(user_id) != str(ADMIN_ID):
+    if user_id != ADMIN_ID:
         bot.send_message(ADMIN_ID, f"💸 Yangi pul yechish so‘rovi!\n👤 ID: {user_id}\n💰 Summasi: {amount} so‘m")
 
-# Referral
-@bot.message_handler(func=lambda m: m.text == "👥 Referal")
-def referal(message):
-    user_id = message.from_user.id
-    referral_link = f"https://t.me/{bot.get_me().username}?start={user_id}"
-    bot.send_message(user_id, f"👥 Do‘stlaringizni taklif qiling!\nHar bir do‘st uchun 1 spin olasiz!\nReferal linkingiz:\n{referral_link}")
-
-# Admin panel
-@bot.message_handler(func=lambda m: m.text == "⚙️ Admin panel" and str(m.from_user.id) == str(ADMIN_ID))
-def admin_panel(message):
-    keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.add("➕ Kanal qo‘shish", "➖ Kanal o‘chirish")
-    keyboard.add("📊 Statistika", "⬅️ Orqaga")
-    bot.send_message(ADMIN_ID, "⚙️ Admin panelga xush kelibsiz!", reply_markup=keyboard)
-
-# Flask webhook
-@app.route("/" + BOT_TOKEN, methods=["POST"])
+# Flask webhook handler
+@app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
         json_string = request.get_data().decode("utf-8")
         update = telebot.types.Update.de_json(json_string)
         bot.process_new_updates([update])
-        logger.info(f"Webhook so'rovi qabul qilindi: {json_string[:200]}")
-        if update.message:
-            logger.info(f"Xabar: {update.message.text} ID: {update.message.from_user.id}")
+        logger.info(f"Webhook so'rovi qabul qilindi: {json_string[:100]}")
         return "OK", 200
     except Exception as e:
         logger.error(f"Webhook xatosi: {e}")
-        return "Error", 500
+        return f"Error: {e}", 500
 
 # Asosiy sahifa
-@app.route("/")
+@app.route("/", methods=["GET"])
 def index():
     return "Bot faqat Telegram orqali ishlaydi!", 200
 
-# Webhookni o‘rnatish
+# Webhook o‘rnatish
 def set_webhook():
     try:
         bot.remove_webhook()
@@ -211,4 +198,4 @@ def set_webhook():
 # Serverni ishga tushirish
 if __name__ == "__main__":
     set_webhook()
-    app.run(host="0.0.0.0", port=PORT, debug=True)
+    app.run(host="0.0.0.0", port=PORT)
